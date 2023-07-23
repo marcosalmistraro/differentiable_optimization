@@ -11,6 +11,7 @@ import torch
 from torch import Tensor
 
 # Allocate to GPU if available
+# TODO fix double statement
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Memory allocation to {device}")
 

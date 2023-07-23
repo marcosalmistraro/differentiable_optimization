@@ -1,5 +1,6 @@
 import argparse
 import os
+import os.path
 import pickle
 
 from matplotlib import pyplot as plt
@@ -253,7 +254,7 @@ class CVXPY_diff(torch.autograd.Function):
 # Run model. 
 # First regenerate dataset by running "python3 problem1_cvxpy_diff.py -regen"
 model = Model()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3) #try lr = 0
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
 split = int(0.6 * len(data))
 idx_train = np.arange(split)
@@ -282,11 +283,10 @@ for n_iter in tqdm.tqdm(range(100)):
 
     # Take loss at the last iteration and print to file
     if n_iter == 99:
-        print(f"Loss = {loss}")
-        with open("/data_analysis/losses_cvxpy_diff.txt", "a") as file:
+        dir_path = "/Users/marco/Documents/Repos/differentiable_optimization/data_analysis"
+        with open(os.path.join(dir_path, "losses_cvxpy_diff.txt"), "a") as file:
             file.write(f"{loss}\n")
-            
-
+    
 # Plot loss function evolution
 plt.plot(losses)
 plt.title('LP problem instance')

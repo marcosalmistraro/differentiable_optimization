@@ -1,15 +1,6 @@
-# Rosenbrock function constrained with a cubic line
-
-import torch
 from torch.autograd import Variable
 from torch.autograd.functional import hessian
 from torch import Tensor, matmul
-
-def constraint_1(input : Tensor):
-    return input[0] + input[1] -2
-
-def constraint_2(input : Tensor):
-    return (input[0] - 1)**3 - input[1]**2 + 1
 
 def calculate_gradient(input : Tensor, function):
     """
@@ -48,24 +39,17 @@ def quadratic_approximation(x0 : Tensor, function):
     grad = calculate_gradient(x0, function)
     hessian = calculate_hessian(x0, function)
     Q = hessian
-    print(grad.size())
-    print(hessian)
 
-    # Construct the q coefficient matrix
-    q = torch.Tensor((grad.unsqueeze(0).size()[0])*3, 
-                     grad.unsqueeze(0).size()[1])
-    
+    # Construct the q coefficient vector
+    q1 = grad
+    q2 = -0.5*(matmul(hessian, x0))
+    q3 = -0.5*matmul(x0, matmul(hessian, x0))
+    q = q1 + q2 + q3
 
-    q[0, :] = grad
-    # Exploit the property xy = y.Tx for generic vectors
-    q[1, :] = -matmul(hessian, x0).T
-    q[2, :] = -matmul(x0, hessian)
-    print(q)
-
-    #return Q, q
+    return Q, q
 
 def test():
-    x0 = Tensor([1, 2])
-    quadratic_approximation(x0, constraint_2)
+    g = calculate_gradient(Tensor([1, 2, 40]), lambda x : 1000*x[0]**x[1]*x[2])
+    print(g)
 
 test()
