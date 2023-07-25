@@ -1,25 +1,25 @@
-from torch.autograd import Variable
+from torch.autograd import grad
 from torch.autograd.functional import hessian
 from torch import Tensor, matmul
+import torch
 
-def calculate_gradient(input : Tensor, function):
+def calculate_gradient(x0 : Tensor, function):
     """
     Calculates the gradient of a function passed as argument w.r.t.
     a specified Tensor.
     """
-    coordinates = Variable(Tensor(input), requires_grad=True)
-    z = function(coordinates)
-    z.backward()
-    return(coordinates.grad)
+    y = function(x0)
+    x0_grad = torch.autograd.grad(y, x0)
+    return x0_grad[0]
 
-def calculate_hessian(input : Tensor, function):
+def calculate_hessian(x0 : Tensor, function):
     """
     Calculates the hessian of a function passed as argument w.r.t.
     a specified Tensor.
     """
-    return hessian(function, input)
+    return hessian(function, x0)
 
-def linear_approximaton(x0 : Tensor, function):
+def linear_approximation(x0 : Tensor, function):
     """
     Calculates the linear approximation of a given function passed
     as argument w.r.t. a specified Tensor. It outputs the parameters 
@@ -47,9 +47,3 @@ def quadratic_approximation(x0 : Tensor, function):
     q = q1 + q2 + q3
 
     return Q, q
-
-def test():
-    g = calculate_gradient(Tensor([1, 2, 40]), lambda x : 1000*x[0]**x[1]*x[2])
-    print(g)
-
-test()
