@@ -76,62 +76,54 @@ class AE(Module):
             Gis = tuple(Gi for (Gi, _) in ineq_constraints)
             his = tuple(hi for (_, hi) in ineq_constraints)
 
-            G = torch.tensor(torch.block_diag(*Gis), requires_grad=True)
-            h = torch.tensor(torch.cat(tuple(hi.unsqueeze(dim=-1) for hi in his)), requires_grad=True)
-        
+            G = torch.tensor(torch.cat(tuple(Gi.unsqueeze(dim=-1) for Gi in Gis), dim=-1), requires_grad=True)
+            h = torch.tensor(torch.cat(tuple(hi.unsqueeze(dim=-1) for hi in his)), requires_grad=True)        
+
         # Do the same for equality constraints
         if len(eq_constraints)!=0:
             Ais = tuple(Ai for (Ai, _) in eq_constraints)
             bis = tuple(bi for (_, bi) in eq_constraints)
 
-            A = torch.tensor(torch.block_diag(*Ais), requires_grad=True)
+            A = torch.tensor(torch.cat(tuple(Ai.unsqueeze(dim=-1) for Ai in Ais), dim=-1), requires_grad=True)
             b = torch.tensor(torch.cat(tuple(bi.unsqueeze(dim=-1) for bi in bis)), requires_grad=True)
 
-        print(G)
-        print(h)
+        # Retrieve the Lagrangian multipliers lamda, nu for the same problem.
+        # This can be done by solving a two-equation system obtained from the
+        # KKT conditions of the QP formulation.
+
+        # Encode MAG matrix for the first equation by combining the A.T and G.T blocks
+        MAG = torch.cat((A.T, G.T), dim=-1)
+
+        # Equally form the vector term for the first equation
+        vector_temp = -matmul(Q, encoded.double()) - q
         
-
-        # # Retrieve the Lagrangian multipliers lamda, nu for the same problem.
-        # # This can be done by solving a two-equation system obtained from the
-        # # KKT conditions of the QP formulation.
-
-        # # Encode MAG matrix for the first equation by first creating the A0 and G0 blocks
-        # A0 = torch.cat((A.T, torch.zeros(A.T.size()[0], G.T.size()[1])), -1)
-        # G0 = torch.cat((torch.zeros(G.T.size()[0], A.T.size()[1]), G.T), -1)
+        # Encode the matrix term for the second equation
+        D_temp = diag(matmul(G, encoded) - h)
         
-        # # Combine them into MAG matrix to account for the first equation
-        # print(A0)
-        # print(G0)
-        # #TODO IMPLEMENT MAG
-        # # MAG = torch.tensor([[A0, G0]], requires_grad=True)
-        # # print(MAG)
+        # Expand it to account for the nu solution component
+        D = torch.cat((torch.zeros(D_temp.size()[0], A.size()[0]), D_temp), -1)
 
-        # print("*"*20)
-        # print(G)
-        # print(encoded)
-        # print(h)
-        # # Encode the matrix term for the second equation
-        # # D_temp = diag(matmul(G, encoded) - h)
-        # sys.exit()
-        # # Expand it to account for the nu solution component
-        # D = torch.cat((torch.zeros(D_temp.size()[0], A.size()[0])), -1)
-        # sys.exit()
+        # Form the matrix term for the linear solver
+        matrix_term = torch.cat((MAG, D), 0)
+        print(matrix_term)
 
-        # # Form the matrix term for the linear solver
-        # matrix_term = torch.cat((MAG, D), 0)
+        # Equally form the vector term for the solver
+        vector_term = torch.cat((vector_temp, torch.zeros(matrix_term.size()[0] - vector_temp.size()[0])), -1)
+        print(vector_term)
 
-        # # Equally form the vector term
-        # vector_temp = matmul(-Q, x) - q
-        # vector_term = torch.cat(vector_temp, torch.zeros(D.size()[0]))
+        # Solve the linear system
+        print(matrix_term.detach().numpy())
+        print(vector_term.detach().numpy())
 
-        # # Solve the linear system
-        # multipliers = Tensor(np.linalg.solve(matrix_term, vector_term))
+        multipliers = Tensor(np.linalg.lstsq(matrix_term.detach().numpy(), 
+                                             vector_term.detach().numpy(),
+                                             rcond=None)[0])
 
-        # # Extract the Lagrangian multipliers from the obtained solution
-        # nu = multipliers[:A0.size()[1]]
-        # lamda = multipliers[A0.size()[1]:]
-        
-        return Q, q, G, h, A, b
+        # Extract the Lagrangian multipliers from the obtained solution
+        nu = multipliers[:A.size()[0]]
+        lamda = multipliers[A.size()[0]:]
+
+        return Q, q, G, h, A, b, lamda, nu
     
     def backward_convert():
         pass
@@ -142,10 +134,7 @@ class AE(Module):
         # The original input is passed as argument in order to provide
         # an initial solution to the NLP system that is solved to retrieve
         # the reconstructed vector
-        decoded = self.decoder(encoded,
-                               self.decoder_objective_function, 
-                               self.decoder_ineq_constraints,
-                               self.decoder_eq_constraints)
+        decoded = self.decoder(encoded)
         return encoded, decoded
     
 
@@ -165,10 +154,7 @@ class Decode_diff(torch.autograd.Function):
         return x.value
     
     @staticmethod
-    def forward(encoded,
-                decoder_objective_function, 
-                decoder_ineq_constraints,
-                decoder_eq_constraints):
+    def forward(encoded):
 
         # Traverse the decoder by computing solution to the non-linear system, given the
         # parameters obtained at the encoder's output
@@ -176,34 +162,59 @@ class Decode_diff(torch.autograd.Function):
 
         # Check if inequalities constraints are present in the definition of the AE.
         # If so, add them to the list of constraints for the solver
-        if len(decoder_ineq_constraints)!=0:
-            ineq_cons = list({'type':'ineq', 'fun':item} for item in decoder_ineq_constraints)
+        # Jacobians for the constrqints are computed by means of a Jacobian-vector product
+        if len(model.decoder_ineq_constraints)!=0:
+            ineq_cons = list({'type':'ineq', 
+                              'fun':item,
+                              'jac':torch.autograd.functional.jvp(item, torch.rand_like(encoded), encoded)}
+                              for item in model.decoder_ineq_constraints)
         # Otherwise, assign an empty list to cons
         else:
             ineq_cons = []
 
         # Do the same for equality constraints
-        if len(decoder_eq_constraints)!=0:
-            eq_cons = list({'type':'eq', 'fun':item} for item in decoder_eq_constraints)
+        if len(model.decoder_eq_constraints)!=0:
+            eq_cons = list({'type':'eq', 
+                            'fun':item,
+                            'jac':torch.autograd.functional.jvp(item, torch.rand_like(encoded), encoded)} 
+                            for item in model.decoder_eq_constraints)
         else:
             eq_cons = []
 
         # Unify the two lists and convert into a tuple
         cons = tuple(ineq_cons + eq_cons)
 
+        # Combute Jacobian for the objective function
+        print("*"*20)
+        print(encoded)
+        print(encoded.requires_grad)
+        
+        def fun(x):
+            y = x**2
+            y.requires_grad=True
+            return y
+
+        print(fun(encoded))
+        i = torch.autograd.grad(fun(encoded), 
+                                inputs=encoded)
+        
+        print(i)
+
+        #g = torch.autograd.grad(res, encoded, torch.tensor(1, dtype=torch.float))
+        sys.exit()
+
         # Exploit initial solution to reconstruct the input features
-        decoded = minimize(decoder_objective_function, x0=encoded, constraints=cons)
+        #decoded = minimize(decoder_objective_function, x0=encoded, jac=constraints=cons)
         
         # Return resulting solution as a grad_enabled tensor
-        return torch.tensor(decoded.x)
+        #return torch.tensor(decoded.x)
 
 
     @staticmethod
     def setup_context(ctx, inputs, output):
         encoded, *_ = inputs
         decoded = output
-        Q, q, G, h, A, b = model.convert(encoded)
-        ctx.save_for_backward(encoded, decoded, Q, q, G, h, A, b)
+        ctx.save_for_backward(encoded, decoded)
 
     @staticmethod
     def backward(ctx, grad_encoded, grad_Q, grad_q, grad_A_in, grad_b_in, grad_A_eq, grad_b_eq, *_):
@@ -328,9 +339,9 @@ for n_iter in tqdm.tqdm(range(100)):
     # and the encoded vector
     # parameters = model.convert(encoded)
     Q, q, G, h, A, b, lamda, nu = model.convert(encoded)
-
-
     sys.exit()
+    
+    
     
 
     # Compute the training loss for the considered data instance

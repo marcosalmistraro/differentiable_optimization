@@ -11,6 +11,7 @@ from scipy.optimize import minimize
 from sklearn.model_selection import train_test_split
 from torch import diag, Tensor, matmul, nn, optim
 from torch.autograd import Variable
+from torch.autograd.functional import jvp
 from torch.nn import Module
 
 from NL_approximations.NL_approximations import quadratic_approximation, linear_approximation
@@ -66,7 +67,7 @@ class Decode_diff(torch.autograd.Function):
         # of the constrained optimization problem for the decoder
 
         Q, q = quadratic_approximation(encoded, decoder_objective_function)
-
+        
         # Check whether inequality constraints are specified by the inner optimization task
         # If so, form G and h vectors for each single constraint of this type. 
         # First initialize empty list of (G, h) tuples which stays empty in case
@@ -171,7 +172,8 @@ class Decode_diff(torch.autograd.Function):
         # Check if inequalities constraints are present in the definition of the AE.
         # If so, add them to the list of constraints for the solver
         if len(decoder_ineq_constraints)!=0:
-            ineq_cons = list({'type':'ineq', 'fun':item} for item in decoder_ineq_constraints)
+            ineq_cons = list({'type':'ineq', 
+                              'fun':item} for item in decoder_ineq_constraints)
         # Otherwise, assign an empty list to cons
         else:
             ineq_cons = []

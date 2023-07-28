@@ -165,7 +165,8 @@ class CVXPY_diff(torch.autograd.Function):
                 b_in : Tensor,
                 A_eq : Tensor,
                 b_eq : Tensor,
-                q : Tensor) -> Tensor:
+                q : Tensor,
+                **kwargs) -> Tensor:
 
         # Solve the problem in a differential fashion
         res, lamda, nu = MSDProblemInstance.solve_with_cvxpy_diff(q, A_in, b_in, A_eq, b_eq)
@@ -174,7 +175,10 @@ class CVXPY_diff(torch.autograd.Function):
         lamda = torch.from_numpy(lamda).unsqueeze(0)
         nu =  torch.from_numpy(nu).unsqueeze(0)
 
-        return res.T, lamda, nu
+        # Store the eps value for inversion of the differential matrix in the backward pass
+        eps = kwargs['eps'] if 'eps' in kwargs else 1e-2
+
+        return res.T, lamda, nu, eps
     
     @staticmethod
     def setup_context(ctx, inputs, outputs):
@@ -184,14 +188,14 @@ class CVXPY_diff(torch.autograd.Function):
         `output` is the output of `forward`.
         """
         A_in, b_in, A_eq, _, _ = inputs
-        res, lamda, nu = outputs
-        ctx.save_for_backward(A_in, b_in, A_eq, res, lamda, nu)
+        res, lamda, nu, eps = outputs
+        ctx.save_for_backward(A_in, b_in, A_eq, res, lamda, nu, eps)
 
     @staticmethod
     def backward(ctx, grad_res, *_):
         
         # Unpack saved tensors
-        A_in, b_in, A_eq, res, lamda, nu = ctx.saved_tensors
+        A_in, b_in, A_eq, res, lamda, nu, eps = ctx.saved_tensors
 
         # Convert res, lamda, nu to float-type tensor
         res = Tensor.float(res)
@@ -219,8 +223,9 @@ class CVXPY_diff(torch.autograd.Function):
         # Take the opposite of the differential matrix
         diff_matrix = -diff_matrix
 
-        # Invert the matrix. First make it invertible by adding a small value to its diagonal
-        diff_matrix = diff_matrix + torch.eye(diff_matrix.size()[0])*1e-2
+        # Invert the matrix. First make it invertible by adding a small value to its diagonal.
+        # The value can be left at defualt or set as a kwarg during the forward pass
+        diff_matrix = diff_matrix + torch.eye(diff_matrix.size()[0])*eps
         diff_matrix = torch.linalg.inv(diff_matrix)
 
         # Construct vector for linear system
@@ -274,10 +279,10 @@ for n_iter in tqdm.tqdm(range(100)):
     # Employ the custom-defined function
     function = CVXPY_diff.apply
 
-    p_pred, _, _ = function(A_in, b_in, A_eq, b_eq, q)
+    p_pred, _, _ = function(A_in, b_in, A_eq, b_eq, q, eps=1e-4)
     
     loss = torch.mean(torch.square(p - p_pred))
-    loss.backward()
+    loss.backward(eps=1e-10)
     optimizer.step()
     losses.append(loss.item())
 
