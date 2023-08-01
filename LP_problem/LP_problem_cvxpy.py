@@ -136,7 +136,7 @@ for n_iter in tqdm.tqdm(range(100)):
 
     # Take loss at the last iteration and print to file
     if n_iter == 99:
-        dir_path = "/Users/marco/Documents/Repos/differentiable_optimization/data_analysis"
+        dir_path = "/Users/marco/Documents/Repos/differentiable_optimization/LP_problem/data_analysis"
         with open(os.path.join(dir_path, "losses_cvxpy.txt"), "a") as file:
             file.write(f"{loss}\n")
 

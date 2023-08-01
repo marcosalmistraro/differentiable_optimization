@@ -1,8 +1,6 @@
 *.DS_Store
 *.pickle
-
 __pycache__/
-
 .idea/
-
 MoNA-export-CASMI_2016.json
+sandbox.py

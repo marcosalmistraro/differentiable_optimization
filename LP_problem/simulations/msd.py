@@ -24,8 +24,6 @@ import json
 from typing import List, Any, Dict
 
 import cvxpy 
-from LP.LP_linprog import LP_linprog
-from QP.QP_qpth import qpth
 from matplotlib import pyplot as plt
 import numpy as np
 from torch import Tensor

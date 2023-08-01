@@ -9,7 +9,7 @@ from torch import Tensor, diag, matmul
 import torch.nn
 import tqdm
 
-from simulations.msd import MoNA, MSDProblemInstance
+from simulations.msd import MSDProblemInstance, MoNA
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_FOLDER = os.path.join(ROOT, 'data')
@@ -32,7 +32,7 @@ if args.regen:
     mona = MoNA(os.path.join(DATA_FOLDER, 'MoNA-export-CASMI_2016.json'))
 
     # Generate random problem instances
-    data = [mona.random() for _ in range(1000)]
+    data = [mona.random() for _ in range(100)]
 
     # Save problem instances
     with open(os.path.join(DATA_FOLDER, 'mona.pickle'), 'wb') as f:
@@ -121,7 +121,7 @@ class Model(torch.nn.Module):
         # Preprocess the f and g tensors to remove redundant entries
         f, g = Model.preprocess_data(f, g)
         
-        # Preprocess tensors for solve_with_qpth method
+        # Preprocess tensors for solve_with_cvxpy_diff method
         n = s.size()[0]
         k = f.size()[0]
 
@@ -166,7 +166,7 @@ class CVXPY_diff(torch.autograd.Function):
                 A_eq : Tensor,
                 b_eq : Tensor,
                 q : Tensor,
-                **kwargs) -> Tensor:
+                _ : Tensor) -> Tensor:
 
         # Solve the problem in a differential fashion
         res, lamda, nu = MSDProblemInstance.solve_with_cvxpy_diff(q, A_in, b_in, A_eq, b_eq)
@@ -175,10 +175,7 @@ class CVXPY_diff(torch.autograd.Function):
         lamda = torch.from_numpy(lamda).unsqueeze(0)
         nu =  torch.from_numpy(nu).unsqueeze(0)
 
-        # Store the eps value for inversion of the differential matrix in the backward pass
-        eps = kwargs['eps'] if 'eps' in kwargs else 1e-2
-
-        return res.T, lamda, nu, eps
+        return res.T, lamda, nu
     
     @staticmethod
     def setup_context(ctx, inputs, outputs):
@@ -187,15 +184,15 @@ class CVXPY_diff(torch.autograd.Function):
         `inputs` is the tuple of arguments passed to the `forward` method.
         `output` is the output of `forward`.
         """
-        A_in, b_in, A_eq, _, _ = inputs
-        res, lamda, nu, eps = outputs
-        ctx.save_for_backward(A_in, b_in, A_eq, res, lamda, nu, eps)
+        A_in, b_in, A_eq, _, _, eps = inputs
+        res, lamda, nu = outputs
+        ctx.save_for_backward(A_in, b_in, A_eq, eps, res, lamda, nu)
 
     @staticmethod
     def backward(ctx, grad_res, *_):
         
         # Unpack saved tensors
-        A_in, b_in, A_eq, res, lamda, nu, eps = ctx.saved_tensors
+        A_in, b_in, A_eq, eps, res, lamda, nu = ctx.saved_tensors
 
         # Convert res, lamda, nu to float-type tensor
         res = Tensor.float(res)
@@ -224,8 +221,8 @@ class CVXPY_diff(torch.autograd.Function):
         diff_matrix = -diff_matrix
 
         # Invert the matrix. First make it invertible by adding a small value to its diagonal.
-        # The value can be left at defualt or set as a kwarg during the forward pass
-        diff_matrix = diff_matrix + torch.eye(diff_matrix.size()[0])*eps
+        # This value can be specified during the training loop through the define_eps method
+        diff_matrix = diff_matrix + torch.eye(diff_matrix.size()[0])*eps.item()
         diff_matrix = torch.linalg.inv(diff_matrix)
 
         # Construct vector for linear system
@@ -254,7 +251,10 @@ class CVXPY_diff(torch.autograd.Function):
         
         # Return as many gradients as there are inputs to the forward method.
         # Arguments that do not require a gradient need to have a corresponding None value
-        return grad_A_in, grad_b_in, grad_A_eq, grad_b_eq, grad_q
+        return grad_A_in, grad_b_in, grad_A_eq, grad_b_eq, grad_q, None
+    
+    def define_eps(eps : float = 1e-3):
+        return torch.Tensor([eps])
 
 # Run model. 
 # First regenerate dataset by running "python3 problem1_cvxpy_diff.py -regen"
@@ -266,7 +266,7 @@ idx_train = np.arange(split)
 idx_test = np.arange(split, len(data))
 
 losses = []
-for n_iter in tqdm.tqdm(range(100)):
+for n_iter in tqdm.tqdm(range(10)):
     optimizer.zero_grad()
     i = idx_train[n_iter % len(idx_train)]
     p = torch.FloatTensor(data[i].p)
@@ -278,11 +278,12 @@ for n_iter in tqdm.tqdm(range(100)):
 
     # Employ the custom-defined function
     function = CVXPY_diff.apply
+    eps = CVXPY_diff.define_eps(1e-3)
 
-    p_pred, _, _ = function(A_in, b_in, A_eq, b_eq, q, eps=1e-4)
+    p_pred, _, _ = function(A_in, b_in, A_eq, b_eq, q, eps)
     
     loss = torch.mean(torch.square(p - p_pred))
-    loss.backward(eps=1e-10)
+    loss.backward()
     optimizer.step()
     losses.append(loss.item())
 
