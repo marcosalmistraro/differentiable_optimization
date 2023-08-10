@@ -7,9 +7,14 @@ import tqdm
 from torch import Tensor, nn, optim
 from torch.nn import Module
 
-import mwe
+import mwe_copy
 
 class AE(Module):
+    """
+    Defines the structure of the model, where the encoder stage is constituted
+    by a NN outputting a learned representation of the parameters of the NLP
+    instance specified as decoder.
+    """
 
     def __init__(self):
         super().__init__()
@@ -18,21 +23,29 @@ class AE(Module):
         self.encoder = nn.Sequential(
             nn.Linear(in_features=2, out_features=16),
             nn.Tanh(),
-            nn.Linear(in_features=16, out_features=2)
+            # The encoder learn a compressed representation
+            # for parameters a, b, c and d
+            nn.Linear(in_features=16, out_features=4)
         )
 
         # Define the applied constraints for the NLP instance
-        rosenbrock_cons = [lambda x : x[1] - 1 - (x[0] - 1)**2,
-                           lambda x : 2 - x[0] - x[1]]
+        ineq_cons = [mwe_copy.ineq_constraint_1, mwe_copy.ineq_constraint_2]
 
-        # Define decoder
-        self.decoder = lambda encoded : mwe.DiffCP.apply(encoded, mwe.rosenbrock,
-                                                         None, [],
-                                                         None, rosenbrock_cons)
+        # Define decoder according to Rosenbrock formulation
+        # See https://en.wikipedia.org/wiki/Test_functions_for_optimization#cite_note-11
+        self.decoder = lambda param, input : mwe_copy.DiffCP.apply(param[:2], mwe_copy.rosenbrock,
+                                                                   None, [],
+                                                                   param[-2:], ineq_cons,
+                                                                   input)
 
     def forward(self, input):
+        """
+        Specifies the forward pass for the model, defining how
+        the encoded and decoded representations are expressed for
+        a given `input` point.
+        """
         encoded = self.encoder(input)
-        decoded = self.decoder(encoded)
+        decoded = self.decoder(encoded, input)
         return decoded
     
 
@@ -40,7 +53,7 @@ class AE(Module):
 model = AE()
 
 # Define optimizer
-optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
+optimizer = optim.Adam(model.parameters(), lr=1e-5)
 
 # Define criterion for weight update
 criterion = nn.MSELoss()
@@ -62,7 +75,7 @@ for i in range(1):
 losses = []
 idx = np.arange(len(dataset))
 
-for n_iter in tqdm.tqdm(range(1000)):
+for n_iter in tqdm.tqdm(range(3000)):
 
     # Take a data point from dataset
     i = idx[n_iter % len(idx)]
@@ -73,14 +86,14 @@ for n_iter in tqdm.tqdm(range(1000)):
 
     # Compute the decoded version of the input vector as output of the AE
     decoded = model.forward(input)
-    
+
     # Compute the training loss for the considered data instance
     train_loss = Tensor(criterion(input, decoded))
 
     # Compute gradients by traversing the graph in a backward fashion
     train_loss.backward()
 
-    # Update parameters
+    # Update parameters to optimize model
     optimizer.step()
 
     # Append loss to the array of losses for the training phase
@@ -89,7 +102,7 @@ for n_iter in tqdm.tqdm(range(1000)):
 # Display the evolution of the loss function over 
 # the training phase
 plt.plot(losses)
-plt.title('Loss function evolution for AE with embedded NLP')
+plt.title('Loss function evolution for AE with embedded NLP - One point, α, β')
 plt.xlabel('Iteration')
 plt.ylabel('Loss function')
 plt.show()
