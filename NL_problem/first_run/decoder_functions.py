@@ -24,7 +24,11 @@ class DiffCP(torch.autograd.Function):
                 input: Tensor) -> Tensor:
         """
         Computes the output of the forward pass for the AE's decoder.
-        It takes
+        It takes as arguments the tensors containing the parameters to 
+        be estimated with regards to the objective function, the inequality 
+        and the equality constraints. The last `input` arguments is used as
+        an initial solution estimate for the SLSQP solver. It returns a decoded
+        version of the input tensor at the output of the decoder stage.
         """
         
         @torch.no_grad()
@@ -105,7 +109,6 @@ class DiffCP(torch.autograd.Function):
 
         # Encode MAG matrix for the first system equation by combining the A.T and G.T blocks
         MAG = torch.cat((A.T, G.T), dim=-1)
-        print(MAG.size())
 
         # Equally form the vector term for the first equation
         vector_temp = -torch.mv(Q, x_star) - q
@@ -153,20 +156,20 @@ class DiffCP(torch.autograd.Function):
         """
 
         # Load inputs and solution
-        x_star, nu_star, lambda_star, G, h, A, b = ctx.saved_tensors
+        x_star, _, lambda_star, G, h, A, _ = ctx.saved_tensors
         obj_param = ctx.obj_param
         obj = ctx.obj
-        eq_param = ctx.eq_param
-        eqs = ctx.eqs
         ineq_param = ctx.ineq_param
         ineqs = ctx.ineqs
-
+        _ = ctx.eq_param
+        _ = ctx.eqs
+        
         # Locally assume the problem is a QP around the optimal solution
         x_star = torch.clone(x_star).detach()
         x_star.requires_grad_()
         obj_param = torch.clone(obj_param).detach()
         obj_param.requires_grad_()
-        Q, q = DiffCP.quadratic_approximation(
+        Q, _ = DiffCP.quadratic_approximation(
             x_star,
             lambda x_: obj(x_, obj_param)
         )
@@ -222,6 +225,8 @@ class DiffCP(torch.autograd.Function):
             grad_obj_param = torch.einsum('ijk,ij->k', jac_Q, grad_Q.double())
             grad_obj_param += torch.einsum('jk,j->k', jac_q, grad_q.double())
 
+        # Print gradient estimation for the parameters of the objective function.
+        # Useful as a means to track convergency at runtime
         print(grad_obj_param)
 
         # Back-propagate through the linear approximation for ineq constraints
@@ -268,7 +273,6 @@ class DiffCP(torch.autograd.Function):
         b = func(x_star) + torch.mv(grad.unsqueeze(0), x_star)
         return A, b
 
-
 def rosenbrock(x: Tensor, param: Tensor) -> Tensor:
     """
     Specifies an expression for the Rosenbrock function parameterized
@@ -285,8 +289,9 @@ def ineq_constraint_1(x: Tensor, param: Tensor) -> Tensor:
     tensor `x` as input argument and `param` as the tensor specifying the parameters
     for the inequality.
     """
-    c = param[0]
-    return x[1] - 1 - (x[0] - 1)**2
+    _ = param[0]
+    _ = param[1]
+    return x[1] - 1 - (x[0] - 1)**3
 
 def ineq_constraint_2(x: Tensor, param: Tensor) -> Tensor:
     """
@@ -295,7 +300,6 @@ def ineq_constraint_2(x: Tensor, param: Tensor) -> Tensor:
     tensor `x` as input argument and `param` as the tensor specifying the parameters
     for the inequality.
     """
-    d = param[1]
+    _ = param[0]
+    _ = param[1]
     return 2 - (x[0] + x[1])
-
-

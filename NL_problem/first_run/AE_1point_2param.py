@@ -7,7 +7,7 @@ import tqdm
 from torch import Tensor, nn, optim
 from torch.nn import Module
 
-import mwe_copy
+import decoder_functions
 
 class AE(Module):
     """
@@ -29,11 +29,11 @@ class AE(Module):
         )
 
         # Define the applied constraints for the NLP instance
-        ineq_cons = [mwe_copy.ineq_constraint_1, mwe_copy.ineq_constraint_2]
+        ineq_cons = [decoder_functions.ineq_constraint_1, decoder_functions.ineq_constraint_2]
 
         # Define decoder according to Rosenbrock formulation
         # See https://en.wikipedia.org/wiki/Test_functions_for_optimization#cite_note-11
-        self.decoder = lambda param, input : mwe_copy.DiffCP.apply(param[:2], mwe_copy.rosenbrock,
+        self.decoder = lambda param, input : decoder_functions.DiffCP.apply(param[:2], decoder_functions.rosenbrock,
                                                                    None, [],
                                                                    param[-2:], ineq_cons,
                                                                    input)
@@ -101,8 +101,13 @@ for n_iter in tqdm.tqdm(range(3000)):
 
 # Display the evolution of the loss function over 
 # the training phase
+fig = plt.figure()
+
 plt.plot(losses)
-plt.title('Loss function evolution for AE with embedded NLP - One point, α, β')
 plt.xlabel('Iteration')
 plt.ylabel('Loss function')
+fig.suptitle("Loss function evolution for AE with embedded NLP", fontsize=18)
+fig.text(0.5, 0.93, "Training on one point - Rosenbrock function parameterized by α and β", 
+         horizontalalignment="center")
+
 plt.show()
