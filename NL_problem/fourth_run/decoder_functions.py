@@ -45,7 +45,7 @@ class DiffCP(torch.autograd.Function):
             w.r.t. a candidate solution `x` passed as argument.
             """
             x = tensor(x, requires_grad=True)
-            f = lambda x_: obj(x_, obj_param)
+            f = lambda x: obj(x, obj_param)
             grad = torch.autograd.functional.jacobian(f, (x,), create_graph=True)[0]
             return grad.cpu().data.numpy()
 
@@ -58,7 +58,7 @@ class DiffCP(torch.autograd.Function):
         # Solve NLP to obtain the decoded representation of the input
         # at the output of the AE's decoder stage
         x0 = np.array(input)
-        res = scipy.optimize.minimize(fun, x0, jac=jac, constraints=cons)
+        res = scipy.optimize.minimize(fun, x0, jac=jac, constraints=cons, method='SLSQP')
         x_star = Tensor(res.x)
 
         # Compute Lagrangian multipliers from the KKT conditions
