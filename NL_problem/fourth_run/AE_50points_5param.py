@@ -9,6 +9,20 @@ from torch.nn import Module
 
 import decoder_functions
 
+# --- Model configuration ---
+INPUT_DIM = 2        # Dimensionality of the points sampled from R^2
+HIDDEN_DIM = 16      # Width of the encoder's hidden layer
+LATENT_DIM = 4       # Size of the learned parameter representation
+N_OBJ_PARAMS = 3     # Number of latent entries feeding the objective function
+
+# --- Training configuration ---
+N_SAMPLES = 50       # Number of data points in the training set
+N_ITERATIONS = 6000  # Number of optimization steps
+LEARNING_RATE = 1e-5
+SEED = 42            # Seed for the pseudo-random generator
+
+PLOT_SUBTITLE = "Training on 50 points - Rosenbrock function parameterized by α, β, γ, δ and ε"
+
 class AE(Module):
     """
     Defines the structure of the model, where the encoder stage is constituted
@@ -21,11 +35,11 @@ class AE(Module):
 
         # Define encoder
         self.encoder = nn.Sequential(
-            nn.Linear(in_features=2, out_features=16),
+            nn.Linear(in_features=INPUT_DIM, out_features=HIDDEN_DIM),
             nn.Tanh(),
             # The encoder learn a compressed representation
-            # for parameters a, b, c and d
-            nn.Linear(in_features=16, out_features=4)
+            # for parameters a, b, c and d
+            nn.Linear(in_features=HIDDEN_DIM, out_features=LATENT_DIM)
         )
 
         # Define the applied constraints for the NLP instance
@@ -33,7 +47,7 @@ class AE(Module):
 
         # Define decoder according to Rosenbrock formulation
         # See https://en.wikipedia.org/wiki/Test_functions_for_optimization#cite_note-11
-        self.decoder = lambda param, input : decoder_functions.DiffCP.apply(param[:3], decoder_functions.rosenbrock,
+        self.decoder = lambda param, input : decoder_functions.DiffCP.apply(param[:N_OBJ_PARAMS], decoder_functions.rosenbrock,
                                                                    None, [],
                                                                    param[-2:], ineq_cons,
                                                                    input)
@@ -47,67 +61,72 @@ class AE(Module):
         encoded = self.encoder(input)
         decoded = self.decoder(encoded, input)
         return decoded
-    
 
-# Create model from the custom-defined class
-model = AE()
 
-# Define optimizer
-optimizer = optim.Adam(model.parameters(), lr=1e-5)
+def main():
+    # Create model from the custom-defined class
+    model = AE()
 
-# Define criterion for weight update
-criterion = nn.MSELoss()
+    # Define optimizer
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-# Create data set from R^2 by sampling uniformly without repetition
-# First set a seed for the pseudo-random generator
-random.seed(42)
-# Build data set
-dataset = []
-for i in range(50):
-    sample = tuple(random.uniform(0, 1) for _ in range(2))
-    if sample not in dataset:
-        dataset.append(sample)
-        i += 1
-    else:
-        continue
+    # Define criterion for weight update
+    criterion = nn.MSELoss()
 
-# Train the AE
-losses = []
-idx = np.arange(len(dataset))
+    # Create data set from R^2 by sampling uniformly without repetition
+    # First set a seed for the pseudo-random generator
+    random.seed(SEED)
+    # Build data set
+    dataset = []
+    for i in range(N_SAMPLES):
+        sample = tuple(random.uniform(0, 1) for _ in range(2))
+        if sample not in dataset:
+            dataset.append(sample)
+            i += 1
+        else:
+            continue
 
-for n_iter in tqdm.tqdm(range(6000)):
+    # Train the AE
+    losses = []
+    idx = np.arange(len(dataset))
 
-    # Take a data point from dataset
-    i = idx[n_iter % len(idx)]
-    input = torch.tensor((dataset[i]), dtype=torch.float32, requires_grad=True)
+    for n_iter in tqdm.tqdm(range(N_ITERATIONS)):
 
-    # Zero-out gradients to avoid accumulation
-    optimizer.zero_grad()
+        # Take a data point from dataset
+        i = idx[n_iter % len(idx)]
+        input = torch.tensor((dataset[i]), dtype=torch.float32, requires_grad=True)
 
-    # Compute the decoded version of the input vector as output of the AE
-    decoded = model.forward(input)
+        # Zero-out gradients to avoid accumulation
+        optimizer.zero_grad()
 
-    # Compute the training loss for the considered data instance
-    train_loss = Tensor(criterion(input, decoded))
+        # Compute the decoded version of the input vector as output of the AE
+        decoded = model.forward(input)
 
-    # Compute gradients by traversing the graph in a backward fashion
-    train_loss.backward()
+        # Compute the training loss for the considered data instance
+        train_loss = Tensor(criterion(input, decoded))
 
-    # Update parameters to optimize model
-    optimizer.step()
+        # Compute gradients by traversing the graph in a backward fashion
+        train_loss.backward()
 
-    # Append loss to the array of losses for the training phase
-    losses.append(train_loss.item())
+        # Update parameters to optimize model
+        optimizer.step()
 
-# Display the evolution of the loss function over 
-# the training phase
-fig = plt.figure()
+        # Append loss to the array of losses for the training phase
+        losses.append(train_loss.item())
 
-plt.plot(losses)
-plt.xlabel('Iteration')
-plt.ylabel('Loss function')
-fig.suptitle("Loss function evolution for AE with embedded NLP", fontsize=18)
-fig.text(0.5, 0.93, "Training on 50 points - Rosenbrock function parameterized by α, β, γ, δ and ε", 
-         horizontalalignment="center")
+    # Display the evolution of the loss function over
+    # the training phase
+    fig = plt.figure()
 
-plt.show()
+    plt.plot(losses)
+    plt.xlabel('Iteration')
+    plt.ylabel('Loss function')
+    fig.suptitle("Loss function evolution for AE with embedded NLP", fontsize=18)
+    fig.text(0.5, 0.93, PLOT_SUBTITLE,
+             horizontalalignment="center")
+
+    plt.show()
+
+
+if __name__ == "__main__":
+    main()
