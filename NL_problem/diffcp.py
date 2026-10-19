@@ -1,11 +1,21 @@
+import logging
+
 import numpy as np
 import scipy.optimize
 import torch
 
-from torch import Tensor, tensor
+from torch import Tensor
 from typing import Any, Callable, List, Tuple
 
+logger = logging.getLogger(__name__)
+
 USE_VJP_BASED_BACKWARD_IMPLEMENTATION = True
+
+
+def _as_leaf(t: Tensor) -> Tensor:
+    """Return a detached, differentiable leaf copy of `t`."""
+    return t.detach().clone().requires_grad_()
+
 
 class DiffCP(torch.autograd.Function):
     """
@@ -21,12 +31,12 @@ class DiffCP(torch.autograd.Function):
                 obj_param: Tensor, obj: Callable,
                 eq_param: Tensor, eqs: List[Callable],
                 ineq_param: Tensor, ineqs: List[Callable],
-                input: Tensor) -> Tensor:
+                x_input: Tensor) -> Tensor:
         """
         Computes the output of the forward pass for the AE's decoder.
         It takes as arguments the tensors containing the parameters to
         be estimated with regards to the objective function, the inequality
-        and the equality constraints. The last `input` arguments is used as
+        and the equality constraints. The last `x_input` argument is used as
         an initial solution estimate for the SLSQP solver. It returns a decoded
         version of the input tensor at the output of the decoder stage.
         """
@@ -36,7 +46,7 @@ class DiffCP(torch.autograd.Function):
             """
             Defines the objective function for the decoder.
             """
-            x = tensor(x)
+            x = torch.as_tensor(x)
             return obj(x, obj_param).item()
 
         def jac(x: np.ndarray) -> np.ndarray:
@@ -44,22 +54,22 @@ class DiffCP(torch.autograd.Function):
             Outputs the gradient of the objective function
             w.r.t. a candidate solution `x` passed as argument.
             """
-            x = tensor(x, requires_grad=True)
+            x = torch.tensor(x, requires_grad=True)
             f = lambda x: obj(x, obj_param)
             grad = torch.autograd.functional.jacobian(f, (x,), create_graph=True)[0]
-            return grad.cpu().data.numpy()
+            return grad.detach().cpu().numpy()
 
         # Build dicts for the specified constraints.
         # These are used in the call to scipy.optimize.minimize()
-        eq_cons = list({'type':'eq', 'fun': lambda x : item(x, eq_param)} for item in eqs)
-        ineq_cons = list({'type':'ineq', 'fun': lambda x: item(x, ineq_param)} for item in ineqs)
+        eq_cons = [{'type': 'eq', 'fun': lambda x: item(x, eq_param)} for item in eqs]
+        ineq_cons = [{'type': 'ineq', 'fun': lambda x: item(x, ineq_param)} for item in ineqs]
         cons = eq_cons + ineq_cons
 
         # Solve NLP to obtain the decoded representation of the input
         # at the output of the AE's decoder stage
-        x0 = np.array(input)
+        x0 = x_input.detach().numpy()
         res = scipy.optimize.minimize(fun, x0, jac=jac, constraints=cons, method='SLSQP')
-        x_star = Tensor(res.x)
+        x_star = torch.tensor(res.x, dtype=torch.float32)
 
         # Compute Lagrangian multipliers from the KKT conditions
 
@@ -71,41 +81,41 @@ class DiffCP(torch.autograd.Function):
         # First initialize empty list of (G, h) tuples which stays empty in case
         # of no constraints
         ineq_cons_approx = []
-        if len(ineq_cons)!=0:
-            for cons in ineq_cons:
-                Gi, hi = DiffCP.linear_approximation(x_star, cons['fun'])
+        if ineq_cons:
+            for con in ineq_cons:
+                Gi, hi = DiffCP.linear_approximation(x_star, con['fun'])
                 ineq_cons_approx.append((Gi, hi))
 
         # If not, assign an empty matrix and vector to express the lack of constraints
         else:
-            G = torch.zeros(1, x_star.size()[0]).clone().detach().requires_grad_()
-            h = torch.zeros(x_star.size()[0]).clone().detach().requires_grad_()
+            G = _as_leaf(torch.zeros(1, x_star.size()[0]))
+            h = _as_leaf(torch.zeros(x_star.size()[0]))
 
         # Perform the same check on equality constraints
         eq_cons_approx = []
-        if len(eq_cons)!=0:
-            for cons in eq_cons:
-                Ai, bi = DiffCP.linear_approximation(x_star, cons['fun'])
+        if eq_cons:
+            for con in eq_cons:
+                Ai, bi = DiffCP.linear_approximation(x_star, con['fun'])
                 eq_cons_approx.append((Ai, bi))
         else:
-            A = torch.zeros(1, x_star.size()[0]).clone().detach().requires_grad_()
-            b = torch.zeros(x_star.size()[0]).clone().detach().requires_grad_()
+            A = _as_leaf(torch.zeros(1, x_star.size()[0]))
+            b = _as_leaf(torch.zeros(x_star.size()[0]))
 
         # Combine the retrieved inequality approximations into one unique matrix and one unique vector
-        if len(ineq_cons_approx)!=0:
+        if ineq_cons_approx:
             Gis = tuple(Gi for (Gi, _) in ineq_cons_approx)
             his = tuple(hi for (_, hi) in ineq_cons_approx)
 
-            G = torch.cat(tuple(Gi.unsqueeze(dim=-1) for Gi in Gis), dim=-1).clone().detach().requires_grad_()
-            h = torch.cat(tuple(hi.unsqueeze(dim=-1) for hi in his)).clone().detach().requires_grad_()
+            G = _as_leaf(torch.cat(tuple(Gi.unsqueeze(dim=-1) for Gi in Gis), dim=-1))
+            h = _as_leaf(torch.cat(tuple(hi.unsqueeze(dim=-1) for hi in his)))
 
         # Do the same for equality constraints
-        if len(eq_cons_approx)!=0:
+        if eq_cons_approx:
             Ais = tuple(Ai for (Ai, _) in eq_cons_approx)
             bis = tuple(bi for (_, bi) in eq_cons_approx)
 
-            A = torch.cat(tuple(Ai.unsqueeze(dim=-1) for Ai in Ais), dim=-1).clone().detach().requires_grad_()
-            b = torch.cat(tuple(bi.unsqueeze(dim=-1) for bi in bis)).clone().detach().requires_grad_()
+            A = _as_leaf(torch.cat(tuple(Ai.unsqueeze(dim=-1) for Ai in Ais), dim=-1))
+            b = _as_leaf(torch.cat(tuple(bi.unsqueeze(dim=-1) for bi in bis)))
 
         # Encode MAG matrix for the first system equation by combining the A.T and G.T blocks
         MAG = torch.cat((A.T, G.T), dim=-1)
@@ -128,8 +138,8 @@ class DiffCP(torch.autograd.Function):
         # Solve the linear system to obtain Lagrangian multipliers
         multipliers = torch.linalg.lstsq(matrix_term, vector_term, rcond=None)[0]
         # Extract the Lagrangian multipliers from the obtained solution
-        nu_star = Tensor(multipliers[:A.size()[0]])
-        lambda_star = Tensor(multipliers[A.size()[0]:])
+        nu_star = multipliers[:A.size()[0]].clone()
+        lambda_star = multipliers[A.size()[0]:].clone()
 
         # Save inputs and solution for backward pass
         ctx.save_for_backward(x_star, nu_star, lambda_star, G, h, A, b)
@@ -151,7 +161,7 @@ class DiffCP(torch.autograd.Function):
         of the gradient of the AE's decoded output. The method outputs as
         many objects as there are inputs to the forward pass, with corresponding
         `None` values for inputs not requiring a gradient. In this case, the lists
-        `obj`, `eqs` and `ineqs` do not have a correspoding gradient, as they are just
+        `obj`, `eqs` and `ineqs` do not have a corresponding gradient, as they are just
         lists of functions for the NLP instance.
         """
 
@@ -161,8 +171,6 @@ class DiffCP(torch.autograd.Function):
         obj = ctx.obj
         ineq_param = ctx.ineq_param
         ineqs = ctx.ineqs
-        _ = ctx.eq_param
-        _ = ctx.eqs
 
         # Locally assume the problem is a QP around the optimal solution
         x_star = torch.clone(x_star).detach()
@@ -183,6 +191,11 @@ class DiffCP(torch.autograd.Function):
         grad_Q = 0.5 * (grad_Q + grad_Q.t())
         grad_q = d_z
 
+        # Constraint-side OptNet gradients (grad_G, grad_h for inequalities, grad_A,
+        # grad_b for equalities). They are kept for completeness with the OptNet
+        # formulation; the returned inequality-parameter gradient is instead recovered
+        # via the linear approximation below, and this problem has no equality
+        # constraints, so grad_A / grad_b are not consumed.
         tmp1 = torch.diag(lambda_star)
         tmp2 = torch.matmul(d_lambda.unsqueeze(-1), x_star.unsqueeze(0))
         grad_G = torch.matmul(tmp1, tmp2) + torch.matmul(lambda_star.unsqueeze(-1), d_z.unsqueeze(0))
@@ -225,9 +238,9 @@ class DiffCP(torch.autograd.Function):
             grad_obj_param = torch.einsum('ijk,ij->k', jac_Q, grad_Q.double())
             grad_obj_param += torch.einsum('jk,j->k', jac_q, grad_q.double())
 
-        # Print gradient estimation for the parameters of the objective function.
-        # Useful as a means to track convergency at runtime
-        print(grad_obj_param)
+        # Log gradient estimation for the parameters of the objective function.
+        # Useful as a means to track convergence at runtime
+        logger.debug("grad_obj_param: %s", grad_obj_param)
 
         # Back-propagate through the linear approximation for ineq constraints
         ineq_param = ineq_param.detach().requires_grad_()

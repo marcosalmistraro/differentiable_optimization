@@ -4,8 +4,7 @@ import random
 import torch
 import tqdm
 
-from torch import Tensor, nn, optim
-from torch.nn import Module
+from torch import nn, optim
 
 import decoder_functions
 
@@ -23,7 +22,7 @@ SEED = 42            # Seed for the pseudo-random generator
 
 PLOT_SUBTITLE = "Training on one point - Rosenbrock function parameterized by α and β"
 
-class AE(Module):
+class AE(nn.Module):
     """
     Defines the structure of the model, where the encoder stage is constituted
     by a NN outputting a learned representation of the parameters of the NLP
@@ -37,7 +36,7 @@ class AE(Module):
         self.encoder = nn.Sequential(
             nn.Linear(in_features=INPUT_DIM, out_features=HIDDEN_DIM),
             nn.Tanh(),
-            # The encoder learn a compressed representation
+            # The encoder learns a compressed representation
             # for parameters a, b, c and d
             nn.Linear(in_features=HIDDEN_DIM, out_features=LATENT_DIM)
         )
@@ -47,19 +46,19 @@ class AE(Module):
 
         # Define decoder according to Rosenbrock formulation
         # See https://en.wikipedia.org/wiki/Test_functions_for_optimization#cite_note-11
-        self.decoder = lambda param, input : decoder_functions.DiffCP.apply(param[:N_OBJ_PARAMS], decoder_functions.rosenbrock,
+        self.decoder = lambda param, x_input : decoder_functions.DiffCP.apply(param[:N_OBJ_PARAMS], decoder_functions.rosenbrock,
                                                                    None, [],
                                                                    param[-2:], ineq_cons,
-                                                                   input)
+                                                                   x_input)
 
-    def forward(self, input):
+    def forward(self, x_input):
         """
         Specifies the forward pass for the model, defining how
         the encoded and decoded representations are expressed for
-        a given `input` point.
+        a given `x_input` point.
         """
-        encoded = self.encoder(input)
-        decoded = self.decoder(encoded, input)
+        encoded = self.encoder(x_input)
+        decoded = self.decoder(encoded, x_input)
         return decoded
 
 
@@ -76,15 +75,14 @@ def main():
     # Create data set from R^2 by sampling uniformly without repetition
     # First set a seed for the pseudo-random generator
     random.seed(SEED)
-    # Build data set
+    # Build data set, skipping any (extremely unlikely) duplicate draws
     dataset = []
-    for i in range(N_SAMPLES):
-        sample = tuple(random.uniform(0, 1) for _ in range(2))
-        if sample not in dataset:
+    seen = set()
+    for _ in range(N_SAMPLES):
+        sample = (random.uniform(0, 1), random.uniform(0, 1))
+        if sample not in seen:
+            seen.add(sample)
             dataset.append(sample)
-            i += 1
-        else:
-            continue
 
     # Train the AE
     losses = []
@@ -94,16 +92,16 @@ def main():
 
         # Take a data point from dataset
         i = idx[n_iter % len(idx)]
-        input = torch.tensor((dataset[i]), dtype=torch.float32, requires_grad=True)
+        x_input = torch.tensor((dataset[i]), dtype=torch.float32, requires_grad=True)
 
         # Zero-out gradients to avoid accumulation
         optimizer.zero_grad()
 
         # Compute the decoded version of the input vector as output of the AE
-        decoded = model.forward(input)
+        decoded = model(x_input)
 
         # Compute the training loss for the considered data instance
-        train_loss = Tensor(criterion(input, decoded))
+        train_loss = criterion(decoded, x_input)
 
         # Compute gradients by traversing the graph in a backward fashion
         train_loss.backward()

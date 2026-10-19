@@ -83,6 +83,7 @@ Training data was sampled uniformly from [0, 1] × [0, 1]. All runs used Adam wi
 ```
 differentiable_optimization/
 ├── NL_problem/                        # Non-linear problem implementation and simulations
+│   ├── diffcp.py                      # Shared DiffCP autograd Function (used by every run)
 │   ├── first_run/                     # Run 1: 1 data point, parameters α, β
 │   │   ├── AE_1point_2param.py
 │   │   └── decoder_functions.py
@@ -101,14 +102,18 @@ differentiable_optimization/
 └── .gitignore
 ```
 
-`NL_problem/` contains one folder per experiment (`first_run`, `second_run`, `third_run`, `fourth_run`), matching the four runs in the [Results](#results) table. Each folder contains:
+`NL_problem/` holds the shared solver module plus one folder per experiment (`first_run`, `second_run`, `third_run`, `fourth_run`), matching the four runs in the [Results](#results) table.
 
-- **`decoder_functions.py`**: the core of the project. It defines `DiffCP`, a custom `torch.autograd.Function` that solves the non-linear constrained problem in the forward pass and back-propagates through it, plus the Rosenbrock objective and the constraints for that run.
-- **A run script** (`AE_<points>_<params>.py`): defines the autoencoder (`AE`), builds the dataset, trains the model and plots the loss curve.
+- **`diffcp.py`**: the core of the project, shared by all runs. It defines `DiffCP`, a custom `torch.autograd.Function` that solves the non-linear constrained problem in the forward pass and back-propagates through it. The implementation is identical across runs, so it lives in one place rather than being duplicated per run.
+
+Each run folder then contains:
+
+- **`decoder_functions.py`**: the run-specific problem definition — the Rosenbrock objective and the constraints for that run. It re-exports `DiffCP` from `../diffcp.py`, so existing `decoder_functions.DiffCP` references keep working.
+- **A run script** (`AE_<points>_<params>.py`): defines the autoencoder (`AE`), builds the dataset, trains the model and plots the loss curve. Tunable settings (network widths, number of samples, iterations, learning rate, seed) are named constants at the top of the file.
 
 ### How the code works
 
-- **Encoder:** a small network (`Linear(2, 16)` → `Tanh` → `Linear(16, 4)` in the 1-point run) whose outputs are the learned parameters of the decoder problem.
+- **Encoder:** a small network (`Linear(2, 16)` → `Tanh` → `Linear(16, 4)`, the same in every run) whose outputs are the learned parameters of the decoder problem.
 - **Forward pass (`DiffCP.forward`):** solves the problem with SciPy's SLSQP, using the input as the starting point. It then builds the local quadratic and linear approximations at the solution and recovers the Lagrange multipliers by solving the KKT system with least squares.
 - **Backward pass (`DiffCP.backward`):** applies the OptNet gradient expressions to the approximated problem. The gradient for the objective parameters is obtained with a vector-Jacobian product. A flag, `USE_VJP_BASED_BACKWARD_IMPLEMENTATION`, switches to a slower Jacobian-based alternative.
 - **Training:** Adam (`lr=1e-5`), MSE loss, and a dataset sampled uniformly from [0, 1]² with a fixed seed (`42`).
@@ -147,7 +152,12 @@ The four experiments:
 | 3 | `third_run` | `AE_50points_3param.py` | 50 data points, 3 parameters (α, β, γ) |
 | 4 | `fourth_run` | `AE_50points_5param.py` | 50 data points, 5 parameters (α, β, γ, δ, ε) |
 
-The script trains the autoencoder and then opens a plot of the loss over the training iterations. During training, the gradient estimate for the objective parameters is printed at every iteration, which is useful for tracking convergence.
+The script trains the autoencoder and then opens a plot of the loss over the training iterations. During training, the gradient estimate for the objective parameters is logged at every iteration (via the standard `logging` module, at `DEBUG` level), which is useful for tracking convergence. To see it, enable debug logging before running, e.g.:
+
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
 
 ## Using it on your own problem
 
@@ -157,8 +167,10 @@ The script trains the autoencoder and then opens a plot of the loss over the tra
 DiffCP.apply(obj_param, obj,        # objective parameters and function
              eq_param, eqs,         # equality constraint parameters and functions
              ineq_param, ineqs,     # inequality constraint parameters and functions
-             input)                 # starting point for the SLSQP solver
+             x_input)               # starting point for the SLSQP solver
 ```
+
+`DiffCP` lives in `NL_problem/diffcp.py`; import it directly with `from diffcp import DiffCP`, or via a run's `decoder_functions` module, which re-exports it.
 
 - The objective is a function `obj(x, param)` that returns a scalar tensor.
 - Constraints are lists of functions in the SciPy convention (`ineq` constraints must be ≥ 0).
