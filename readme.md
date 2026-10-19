@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3-blue?logo=python&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?logo=pytorch&logoColor=white)
 ![Thesis](https://img.shields.io/badge/Thesis-KU%20Leuven-005b99)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](./License)
 
 Code and simulations for my Master's thesis, the final work of the **Advanced Master's in Artificial Intelligence** (Engineering and Computer Science option) at **KU Leuven**, academic year 2022–2023. Supervisor: Prof. Yves Moreau. Assistant-supervisor: Antoine Passemiers.
 
@@ -190,4 +190,4 @@ GitHub: [@marcosalmistraro](https://github.com/marcosalmistraro) · [LinkedIn](h
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for details. *(Add the same `LICENSE` file as in your other repo.)*
+This project is licensed under the MIT License. See the [License](./License) file for details.
