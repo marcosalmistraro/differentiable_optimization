@@ -107,7 +107,7 @@ differentiable_optimization/
 
 Each run folder then contains:
 
-- **`decoder_functions.py`**: the run-specific problem definition — the Rosenbrock objective and the constraints for that run. It re-exports `DiffCP` from `../diffcp.py`, so existing `decoder_functions.DiffCP` references keep working.
+- **`decoder_functions.py`**: the run-specific problem definition - the Rosenbrock objective and the constraints for that run. It re-exports `DiffCP` from `../diffcp.py`, so existing `decoder_functions.DiffCP` references keep working.
 - **A run script** (`AE_<points>_<params>.py`): defines the autoencoder (`AE`), builds the dataset, trains the model and plots the loss curve. Tunable settings (network widths, number of samples, iterations, learning rate, seed) are named constants at the top of the file.
 
 ### How the code works
